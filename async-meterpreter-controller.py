@@ -470,6 +470,7 @@ async def do_stuff_with_meterpreter(client, sess_num):
     ######################################
     #           YOUR CODE HERE           #
     ######################################
+    pass
 
 async def attack_with_session(client, session, sess_num):
     ''' Attacks with a session '''
